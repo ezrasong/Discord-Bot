@@ -21,8 +21,8 @@ Self-hosted Discord bot with slash commands for muting / vote-muting / russian r
 | `/minecraftwatch add <host> <channel> <role> [port] [edition]` | Watch a Minecraft server and announce up/down + join/leave events. Requires Manage Server. |
 | `/minecraftwatch remove <host> [port] [edition]` | Stop watching a server. |
 | `/minecraftwatch list` | List watched servers. |
-| `/mcserver start\|stop\|restart` | Control the configured AMP-managed Minecraft server. Requires a role named **minecraft** (case-insensitive). |
-| `/mcserver status` | Read-only AMP status check. Open to anyone. |
+| `/mcserver start\|stop\|restart [server]` | Control an AMP-managed Minecraft server. `server` autocompletes from your ADS instances; omit it to use the `AMP_INSTANCE` default. Requires a role named **minecraft** (case-insensitive). |
+| `/mcserver status [server]` | Read-only AMP status check for the chosen (or default) server. Open to anyone. |
 
 ### Internships
 Subscribers get a DM whenever a new listing is added to the [SimplifyJobs Off-Season Internships](https://github.com/SimplifyJobs/Summer2026-Internships/blob/dev/README-Off-Season.md) README. The bot polls every 10 minutes; the first poll seeds a baseline so existing listings don't flood your DMs.

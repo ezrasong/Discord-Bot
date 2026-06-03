@@ -433,10 +433,9 @@ let internshipBaselined = false;
 
 let ampSessionId = null;
 let ampSessionExpiresAt = 0;
-let ampResolvedInstanceId = null;
-let ampInstanceSessionId = null;
-let ampInstanceSessionExpiresAt = 0;
-let ampInstanceSessionFor = null;
+const ampResolvedInstances = new Map(); // lowercased selector -> instanceId
+const ampInstanceSessions = new Map(); // instanceId -> { sessionId, expiresAt }
+let ampInstancesCache = null; // { at, list: [{ id, name, aliases: [lowercased] }] }
 
 const RUSSIAN_ROULETTE_COOLDOWN = 30;
 const VOTE_MUTE_TTL_MS = 5 * 60 * 1000;
@@ -1053,29 +1052,51 @@ async function ampCallRaw(endpoint, body = {}) {
     return text ? JSON.parse(text) : {};
 }
 
-async function ampResolveInstance() {
-    if (!AMP_INSTANCE) return null;
-    if (ampResolvedInstanceId) return ampResolvedInstanceId;
+const AMP_INSTANCES_CACHE_TTL_MS = 30 * 1000;
 
+async function ampGetInstances({ force = false } = {}) {
+    if (!force && ampInstancesCache && Date.now() - ampInstancesCache.at < AMP_INSTANCES_CACHE_TTL_MS) {
+        return ampInstancesCache.list;
+    }
     const data = await ampCallRaw('ADSModule/GetInstances');
     const targets = Array.isArray(data) ? data : (data.result ?? data.Result ?? []);
-    const q = AMP_INSTANCE.toLowerCase();
-
+    const list = [];
     for (const target of targets) {
         const available = target.AvailableInstances ?? target.availableInstances ?? [];
         for (const inst of available) {
             const id = inst.InstanceID ?? inst.instanceID ?? inst.ID;
-            const names = [id, inst.InstanceName, inst.FriendlyName, inst.instanceName, inst.friendlyName]
+            if (!id) continue;
+            const name = inst.FriendlyName ?? inst.friendlyName ?? inst.InstanceName ?? inst.instanceName ?? id;
+            const aliases = [id, inst.InstanceName, inst.FriendlyName, inst.instanceName, inst.friendlyName]
                 .filter(Boolean)
                 .map((s) => String(s).toLowerCase());
-            if (names.includes(q) || (id && id.toLowerCase().startsWith(q))) {
-                ampResolvedInstanceId = id;
-                console.log(`Resolved AMP instance "${AMP_INSTANCE}" -> ${id}`);
-                return id;
-            }
+            list.push({ id, name, aliases });
         }
     }
-    throw new Error(`AMP instance "${AMP_INSTANCE}" not found in ADS.`);
+    ampInstancesCache = { at: Date.now(), list };
+    return list;
+}
+
+async function ampResolveInstance(selector) {
+    const sel = selector ?? AMP_INSTANCE;
+    if (!sel) return null; // No ADS instance configured: talk to AMP directly (single-server).
+    const q = String(sel).toLowerCase();
+    if (ampResolvedInstances.has(q)) return ampResolvedInstances.get(q);
+
+    const instances = await ampGetInstances();
+    for (const inst of instances) {
+        if (inst.aliases.includes(q) || inst.id.toLowerCase().startsWith(q)) {
+            ampResolvedInstances.set(q, inst.id);
+            console.log(`Resolved AMP instance "${sel}" -> ${inst.id}`);
+            return inst.id;
+        }
+    }
+    throw new Error(`AMP instance "${sel}" not found in ADS.`);
+}
+
+function ampInstanceName(instanceId) {
+    const found = ampInstancesCache?.list.find((i) => i.id === instanceId);
+    return found ? found.name : instanceId;
 }
 
 async function ampInstanceLogin(instanceId) {
@@ -1091,39 +1112,40 @@ async function ampInstanceLogin(instanceId) {
         const reason = data.resultReason || (data.success === false ? 'credentials rejected on instance' : JSON.stringify(data).slice(0, 200));
         throw new Error(`AMP instance login rejected: ${reason}`);
     }
-    ampInstanceSessionId = data.sessionID;
-    ampInstanceSessionExpiresAt = Date.now() + AMP_SESSION_TTL_MS;
-    ampInstanceSessionFor = instanceId;
+    ampInstanceSessions.set(instanceId, {
+        sessionId: data.sessionID,
+        expiresAt: Date.now() + AMP_SESSION_TTL_MS,
+    });
     console.log(`[amp] instance session established for ${instanceId}`);
+    return data.sessionID;
 }
 
-async function ampCall(endpoint, body = {}) {
-    const instanceId = await ampResolveInstance();
+async function ampInstanceSession(instanceId) {
+    const cached = ampInstanceSessions.get(instanceId);
+    if (cached && Date.now() < cached.expiresAt) return cached.sessionId;
+    return ampInstanceLogin(instanceId);
+}
+
+async function ampCall(endpoint, body = {}, selector) {
+    const instanceId = await ampResolveInstance(selector);
     if (!instanceId) {
         return ampCallRaw(endpoint, body);
     }
 
-    if (
-        !ampInstanceSessionId ||
-        ampInstanceSessionFor !== instanceId ||
-        Date.now() > ampInstanceSessionExpiresAt
-    ) {
-        await ampInstanceLogin(instanceId);
-    }
-
+    let sid = await ampInstanceSession(instanceId);
     const url = `${AMP_URL.replace(/\/$/, '')}/API/ADSModule/Servers/${instanceId}/API/${endpoint}`;
-    const send = (sid) => fetch(url, {
+    const send = (s) => fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ SESSIONID: sid, ...body }),
+        body: JSON.stringify({ SESSIONID: s, ...body }),
     });
 
     console.log(`[amp] -> ADSModule/Servers/${instanceId}/API/${endpoint}`);
-    let res = await send(ampInstanceSessionId);
+    let res = await send(sid);
     if (res.status === 401 || res.status === 403) {
         console.log(`[amp] instance session stale, re-login`);
-        await ampInstanceLogin(instanceId);
-        res = await send(ampInstanceSessionId);
+        sid = await ampInstanceLogin(instanceId);
+        res = await send(sid);
     }
     const text = await res.text();
     console.log(`[amp] <- ADSModule/Servers/${instanceId}/API/${endpoint} ${res.status} ${text.slice(0, 300)}`);
@@ -1132,6 +1154,15 @@ async function ampCall(endpoint, body = {}) {
 }
 
 // --- Slash command definitions ---
+
+// Shared `server` option for every /mcserver subcommand: picks which AMP
+// instance to act on, autocompleted from the ADS instance list. Omitting it
+// falls back to the AMP_INSTANCE env var.
+const mcServerOption = (o) =>
+    o
+        .setName('server')
+        .setDescription('Which AMP server (defaults to AMP_INSTANCE).')
+        .setAutocomplete(true);
 
 const commands = [
     new SlashCommandBuilder()
@@ -1269,11 +1300,19 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('mcserver')
-        .setDescription('Control the configured AMP Minecraft server.')
-        .addSubcommand((sc) => sc.setName('start').setDescription('Start the server.'))
-        .addSubcommand((sc) => sc.setName('stop').setDescription('Stop the server.'))
-        .addSubcommand((sc) => sc.setName('restart').setDescription('Restart the server.'))
-        .addSubcommand((sc) => sc.setName('status').setDescription('Check AMP-reported status.')),
+        .setDescription('Control an AMP-managed Minecraft server.')
+        .addSubcommand((sc) =>
+            sc.setName('start').setDescription('Start the server.').addStringOption(mcServerOption)
+        )
+        .addSubcommand((sc) =>
+            sc.setName('stop').setDescription('Stop the server.').addStringOption(mcServerOption)
+        )
+        .addSubcommand((sc) =>
+            sc.setName('restart').setDescription('Restart the server.').addStringOption(mcServerOption)
+        )
+        .addSubcommand((sc) =>
+            sc.setName('status').setDescription('Check AMP-reported status.').addStringOption(mcServerOption)
+        ),
     new SlashCommandBuilder()
         .setName('internships')
         .setDescription('Subscribe to DMs about new SimplifyJobs off-season internship listings.')
@@ -1860,6 +1899,30 @@ client.on('interactionCreate', async (interaction) => {
         }
         return;
     }
+    if (interaction.isAutocomplete()) {
+        const focused = interaction.options.getFocused(true);
+        if (interaction.commandName !== 'mcserver' || focused.name !== 'server' || !ampConfigured()) {
+            return interaction.respond([]).catch(() => {});
+        }
+        try {
+            const q = String(focused.value || '').toLowerCase();
+            const instances = await ampGetInstances();
+            const nameCounts = new Map();
+            for (const i of instances) nameCounts.set(i.name, (nameCounts.get(i.name) ?? 0) + 1);
+            const choices = instances
+                .filter((i) => !q || i.name.toLowerCase().includes(q) || i.aliases.some((a) => a.includes(q)))
+                .slice(0, 25)
+                .map((i) => {
+                    // Disambiguate identically-named instances with a short id suffix.
+                    const label = nameCounts.get(i.name) > 1 ? `${i.name} (${i.id.slice(0, 8)})` : i.name;
+                    return { name: label.slice(0, 100), value: i.id };
+                });
+            return interaction.respond(choices).catch(() => {});
+        } catch (e) {
+            console.error('[amp] autocomplete failed:', e?.message ?? e);
+            return interaction.respond([]).catch(() => {});
+        }
+    }
     if (!interaction.isChatInputCommand()) return;
     const { commandName } = interaction;
 
@@ -2193,6 +2256,8 @@ client.on('interactionCreate', async (interaction) => {
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+        const selector = interaction.options.getString('server') || undefined;
+
         const endpointMap = {
             start: 'Core/Start',
             stop: 'Core/Stop',
@@ -2202,7 +2267,9 @@ client.on('interactionCreate', async (interaction) => {
         const endpoint = endpointMap[sub];
 
         try {
-            const result = await ampCall(endpoint);
+            const result = await ampCall(endpoint, {}, selector);
+            const instanceId = await ampResolveInstance(selector);
+            const label = instanceId ? ` for **${ampInstanceName(instanceId)}**` : '';
             if (sub === 'status') {
                 const stateCode = result?.State;
                 const stateName = AMP_STATE_NAMES[stateCode] ?? `Unknown (${stateCode})`;
@@ -2210,10 +2277,10 @@ client.on('interactionCreate', async (interaction) => {
                 const playerStr = players
                     ? ` — players: ${players.RawValue}/${players.MaxValue}`
                     : '';
-                return interaction.editReply(`AMP status: **${stateName}**${playerStr}`);
+                return interaction.editReply(`AMP status${label}: **${stateName}**${playerStr}`);
             }
             return interaction.editReply(
-                `Sent \`${sub}\` to AMP. It may take a moment to take effect.`
+                `Sent \`${sub}\`${label} to AMP. It may take a moment to take effect.`
             );
         } catch (e) {
             console.error(`AMP ${sub} failed:`, e);

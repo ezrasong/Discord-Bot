@@ -60,6 +60,11 @@ const AMP_USERNAME = process.env.AMP_USERNAME;
 const AMP_PASSWORD = process.env.AMP_PASSWORD;
 const AMP_INSTANCE = process.env.AMP_INSTANCE; // instance name or GUID when using ADS
 const AMP_SESSION_TTL_MS = 10 * 60 * 1000;
+// Verbose per-request AMP logging is off by default (the watch polls every
+// 15s and would otherwise flood the logs). Set AMP_DEBUG=1 to turn it on.
+const AMP_DEBUG = /^(1|true|yes)$/i.test(process.env.AMP_DEBUG || '');
+const ampLog = (...args) => { if (AMP_DEBUG) console.log(...args); };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const AMP_STATE_NAMES = {
     '-1': 'Undefined',
     0: 'Stopped',
@@ -930,6 +935,30 @@ async function checkServerStatus(instanceId) {
     };
 }
 
+// ADSModule/StartInstance only boots the AMP instance, not the game inside it,
+// and the instance's Core API isn't reachable for a few seconds after. Poll
+// until it's reachable, then start the game if it isn't already running.
+async function startGameWhenInstanceReady(instanceId) {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+        await sleep(5_000);
+        let s;
+        try {
+            s = await checkServerStatus(instanceId);
+        } catch {
+            continue;
+        }
+        if (s.stateName === 'Unavailable') continue; // instance still booting
+        if (!s.online) {
+            await ampCall('Core/Start', {}, instanceId).catch((e) =>
+                console.error(`[gameserver] auto-start after boot failed for ${instanceId}:`, e?.message ?? e)
+            );
+        }
+        return;
+    }
+    console.error(`[gameserver] ${instanceId} didn't become reachable within 120s; game not auto-started.`);
+}
+
 async function resolveWatchChannel(watch) {
     return (
         client.channels.cache.get(watch.channelId) ??
@@ -950,7 +979,7 @@ async function pollServerWatches() {
             console.error(`[watch] status check failed for ${name}:`, e?.message ?? e);
             continue;
         }
-        console.log(
+        ampLog(
             `[watch] ${name} online=${result.online} state=${result.stateName} ` +
             `players=${result.count}/${result.maxCount} lastOnline=${watch.lastOnline}`
         );
@@ -1041,15 +1070,15 @@ async function ampCallRaw(endpoint, body = {}) {
         body: JSON.stringify({ SESSIONID: ampSessionId, ...body }),
     });
 
-    console.log(`[amp] -> ${endpoint}`);
+    ampLog(`[amp] -> ${endpoint}`);
     let res = await send();
     if (res.status === 401 || res.status === 403) {
-        console.log(`[amp] ${endpoint} ${res.status}, re-authenticating`);
+        ampLog(`[amp] ${endpoint} ${res.status}, re-authenticating`);
         await ampLogin();
         res = await send();
     }
     const text = await res.text();
-    console.log(`[amp] <- ${endpoint} ${res.status} ${text.slice(0, 300)}`);
+    ampLog(`[amp] <- ${endpoint} ${res.status} ${text.slice(0, 300)}`);
     if (!res.ok) throw new Error(`AMP ${endpoint} HTTP ${res.status}: ${text.slice(0, 200)}`);
     return text ? JSON.parse(text) : {};
 }
@@ -1089,7 +1118,7 @@ async function ampResolveInstance(selector) {
     for (const inst of instances) {
         if (inst.aliases.includes(q) || inst.id.toLowerCase().startsWith(q)) {
             ampResolvedInstances.set(q, inst.id);
-            console.log(`Resolved AMP instance "${sel}" -> ${inst.id}`);
+            ampLog(`Resolved AMP instance "${sel}" -> ${inst.id}`);
             return inst.id;
         }
     }
@@ -1118,7 +1147,7 @@ async function ampInstanceLogin(instanceId) {
         sessionId: data.sessionID,
         expiresAt: Date.now() + AMP_SESSION_TTL_MS,
     });
-    console.log(`[amp] instance session established for ${instanceId}`);
+    ampLog(`[amp] instance session established for ${instanceId}`);
     return data.sessionID;
 }
 
@@ -1142,15 +1171,15 @@ async function ampCall(endpoint, body = {}, selector) {
         body: JSON.stringify({ SESSIONID: s, ...body }),
     });
 
-    console.log(`[amp] -> ADSModule/Servers/${instanceId}/API/${endpoint}`);
+    ampLog(`[amp] -> ADSModule/Servers/${instanceId}/API/${endpoint}`);
     let res = await send(sid);
     if (res.status === 401 || res.status === 403) {
-        console.log(`[amp] instance session stale, re-login`);
+        ampLog(`[amp] instance session stale, re-login`);
         sid = await ampInstanceLogin(instanceId);
         res = await send(sid);
     }
     const text = await res.text();
-    console.log(`[amp] <- ADSModule/Servers/${instanceId}/API/${endpoint} ${res.status} ${text.slice(0, 300)}`);
+    ampLog(`[amp] <- ADSModule/Servers/${instanceId}/API/${endpoint} ${res.status} ${text.slice(0, 300)}`);
     if (!res.ok) throw new Error(`AMP ${endpoint} HTTP ${res.status}: ${text.slice(0, 200)}`);
     return text ? JSON.parse(text) : {};
 }
@@ -2278,12 +2307,18 @@ client.on('interactionCreate', async (interaction) => {
                 if (!instanceId) {
                     return interaction.editReply(`That server is fully stopped and can't be started remotely.`);
                 }
-                // start / restart: bring the whole instance online via the controller.
+                // start / restart: bring the whole instance online via the controller,
+                // then launch the game once the instance's API is reachable.
                 const adsResult = await ampCallRaw('ADSModule/StartInstance', { InstanceName: instanceId });
                 if (adsResult && adsResult.Status === false) {
                     return interaction.editReply(`Couldn't start **${name}** — ${adsResult.Reason || 'no reason given'}`);
                 }
-                return interaction.editReply(`**${name}** was fully stopped — bringing it back online now. Give it a minute.`);
+                startGameWhenInstanceReady(instanceId).catch((e) =>
+                    console.error('[gameserver] post-start failed:', e?.message ?? e)
+                );
+                return interaction.editReply(
+                    `**${name}** was fully stopped — booting it up and starting the game now. Give it a minute or two.`
+                );
             }
         } catch (e) {
             console.error(`AMP ${sub} failed:`, e);

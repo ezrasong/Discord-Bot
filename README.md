@@ -37,6 +37,7 @@ Both commands talk to [AMP](https://cubecoders.com/AMP), so they work for **any 
 | `AMP_USERNAME` / `AMP_PASSWORD` | _(unset)_ | AMP login credentials. |
 | `AMP_INSTANCE` | _(unset)_ | Optional fallback instance for single-server (non-ADS) AMP setups. The `/gameserver` and `/serverwatch` commands always take an explicit `server`, so this isn't needed when using ADS. |
 | `GAMESERVER_ROLE` | `minecraft` | Role name (case-insensitive) required to run `/gameserver start\|stop\|restart`. |
+| `AMP_DEBUG` | _(off)_ | Set to `1` to log every AMP API request/response. Off by default to keep logs quiet (the watch polls every 15s). |
 
 ### Internships
 Subscribers get a DM whenever a new listing is added to the [SimplifyJobs Off-Season Internships](https://github.com/SimplifyJobs/Summer2026-Internships/blob/dev/README-Off-Season.md) README. The bot polls every 10 minutes; the first poll seeds a baseline so existing listings don't flood your DMs.

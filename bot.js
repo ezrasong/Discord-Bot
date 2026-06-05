@@ -2244,30 +2244,52 @@ client.on('interactionCreate', async (interaction) => {
 
         const selector = interaction.options.getString('server') || undefined;
 
-        const endpointMap = {
-            start: 'Core/Start',
-            stop: 'Core/Stop',
-            restart: 'Core/Restart',
-            status: 'Core/GetStatus',
-        };
-        const endpoint = endpointMap[sub];
-
         try {
-            const result = await ampCall(endpoint, {}, selector);
             const instanceId = await ampResolveInstance(selector);
-            const label = instanceId ? ` for **${ampInstanceName(instanceId)}**` : '';
+            const name = instanceId ? ampInstanceName(instanceId) : 'the server';
+            const label = instanceId ? ` for **${name}**` : '';
+
             if (sub === 'status') {
-                const stateCode = result?.State;
-                const stateName = AMP_STATE_NAMES[stateCode] ?? `Unknown (${stateCode})`;
-                const players = result?.Metrics?.['Active Users'];
-                const playerStr = players
-                    ? ` — players: ${players.RawValue}/${players.MaxValue}`
-                    : '';
-                return interaction.editReply(`AMP status${label}: **${stateName}**${playerStr}`);
+                const s = await checkServerStatus(selector);
+                const playerStr = s.maxCount ? ` — players: ${s.count}/${s.maxCount}` : '';
+                return interaction.editReply(`AMP status${label}: **${s.stateName}**${playerStr}`);
             }
-            return interaction.editReply(
-                `Sent \`${sub}\`${label} to AMP. It may take a moment to take effect.`
-            );
+
+            // start/stop/restart act on the game inside the instance via Core/*.
+            const coreEndpoint = { start: 'Core/Start', stop: 'Core/Stop', restart: 'Core/Restart' }[sub];
+            try {
+                const result = await ampCall(coreEndpoint, {}, selector);
+                if (result && result.Status === false) {
+                    return interaction.editReply(
+                        `AMP couldn't ${sub}${label}: ${result.Reason || 'unknown reason'}`
+                    );
+                }
+                return interaction.editReply(
+                    `Sent \`${sub}\`${label} to AMP. It may take a moment to take effect.`
+                );
+            } catch (e) {
+                // If the instance itself is stopped at the panel level, Core/* is unreachable.
+                // Escalate to the ADS controller, which manages the instance lifecycle.
+                if (!isInstanceUnavailable(e?.message)) throw e;
+                if (sub === 'stop') {
+                    return interaction.editReply(`**${name}** is already offline (its AMP instance isn't running).`);
+                }
+                if (!instanceId) {
+                    return interaction.editReply(
+                        `**${name}**'s AMP instance isn't running, and no ADS instance is configured to bring it up.`
+                    );
+                }
+                // start / restart: bring the whole instance online via the controller.
+                const adsResult = await ampCallRaw('ADSModule/StartInstance', { InstanceName: instanceId });
+                if (adsResult && adsResult.Status === false) {
+                    return interaction.editReply(
+                        `AMP couldn't start **${name}**'s instance: ${adsResult.Reason || 'unknown reason'}`
+                    );
+                }
+                return interaction.editReply(
+                    `**${name}**'s instance was offline — sent **start** to bring it online. Give it a minute to boot.`
+                );
+            }
         } catch (e) {
             console.error(`AMP ${sub} failed:`, e);
             return interaction.editReply(`AMP request failed: ${e.message}`);

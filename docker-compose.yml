@@ -8,6 +8,13 @@ services:
       - LAVALINK_HOST=lavalink
       - LAVALINK_PORT=2333
       - LAVALINK_PASSWORD=youshallnotpass
+      # AMP game-server control + watching (optional). Uncomment and fill in to enable
+      # /gameserver and /serverwatch. Works for any game AMP manages.
+      # - AMP_URL=http://tower.local:8080
+      # - AMP_USERNAME=discord-bot
+      # - AMP_PASSWORD=changeme
+      # - AMP_INSTANCE=             # default instance for /gameserver when none is specified (ADS only)
+      # - GAMESERVER_ROLE=minecraft # role name required for /gameserver start|stop|restart
     depends_on:
       - lavalink
     volumes:

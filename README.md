@@ -1,6 +1,6 @@
 # Discord Bot
 
-Self-hosted Discord bot with slash commands for muting / vote-muting / russian roulette, reaction roles, Minecraft server watching + AMP control, music playback (YouTube, SoundCloud, Spotify metadata, etc) via Lavalink, and DM alerts for new SimplifyJobs off-season internship listings. Runs lean — bot itself is ~30-40 MB RAM, audio work is offloaded to a separate Lavalink container.
+Self-hosted Discord bot with slash commands for muting / vote-muting / russian roulette, reaction roles, AMP game-server watching + control (any game AMP manages), music playback (YouTube, SoundCloud, Spotify metadata, etc) via Lavalink, and DM alerts for new SimplifyJobs off-season internship listings. Runs lean — bot itself is ~30-40 MB RAM, audio work is offloaded to a separate Lavalink container.
 
 ## Commands
 
@@ -15,14 +15,28 @@ Self-hosted Discord bot with slash commands for muting / vote-muting / russian r
 | `/rolepanel <title> <emoji1> <role1> ...` | Send a panel message with up to 4 emoji/role pairs. Requires Manage Roles. |
 | `/removereactionrole <message_id> <emoji>` | Remove a reaction role. Requires Manage Roles. |
 
-### Minecraft
+### Game servers (AMP)
+
+Both commands talk to [AMP](https://cubecoders.com/AMP), so they work for **any game AMP manages** (Minecraft, Valheim, Rust, Terraria, etc.). The `server` option autocompletes from your ADS instance list. Requires `AMP_URL`, `AMP_USERNAME`, and `AMP_PASSWORD` to be set.
+
 | Command | Description |
 |---|---|
-| `/minecraftwatch add <host> <channel> <role> [port] [edition]` | Watch a Minecraft server and announce up/down + join/leave events. Requires Manage Server. |
-| `/minecraftwatch remove <host> [port] [edition]` | Stop watching a server. |
-| `/minecraftwatch list` | List watched servers. |
-| `/mcserver start\|stop\|restart [server]` | Control an AMP-managed Minecraft server. `server` autocompletes from your ADS instances; omit it to use the `AMP_INSTANCE` default. Requires a role named **minecraft** (case-insensitive). |
-| `/mcserver status [server]` | Read-only AMP status check for the chosen (or default) server. Open to anyone. |
+| `/serverwatch add <server> <channel> <role>` | Watch an AMP server and announce online/offline + player-count changes. Pings `<role>` on online/offline transitions. Requires Manage Server. |
+| `/serverwatch remove <server>` | Stop watching a server. Requires Manage Server. |
+| `/serverwatch list` | List watched servers and their last-known state. |
+| `/gameserver start\|stop\|restart [server]` | Control an AMP-managed server. `server` autocompletes from your ADS instances; omit it to use the `AMP_INSTANCE` default. Requires a role named **minecraft** by default (configurable via `GAMESERVER_ROLE`). |
+| `/gameserver status [server]` | Read-only AMP status (state + player count) for the chosen (or default) server. Open to anyone. |
+
+> **Watching** reports the server's running state and a live **player count** (e.g. *"2 players joined — now 5 online"*) — it does not list individual player names. Player names aren't exposed uniformly across games by AMP; ask if you want name-level tracking for Minecraft specifically.
+
+#### AMP environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `AMP_URL` | _(unset)_ | Base URL of your AMP / ADS controller (e.g. `https://amp.example.com`). |
+| `AMP_USERNAME` / `AMP_PASSWORD` | _(unset)_ | AMP login credentials. |
+| `AMP_INSTANCE` | _(unset)_ | Default instance name or GUID when omitting the `server` option on `/gameserver`. |
+| `GAMESERVER_ROLE` | `minecraft` | Role name (case-insensitive) required to run `/gameserver start\|stop\|restart`. |
 
 ### Internships
 Subscribers get a DM whenever a new listing is added to the [SimplifyJobs Off-Season Internships](https://github.com/SimplifyJobs/Summer2026-Internships/blob/dev/README-Off-Season.md) README. The bot polls every 10 minutes; the first poll seeds a baseline so existing listings don't flood your DMs.

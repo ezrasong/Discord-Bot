@@ -428,7 +428,7 @@ const muteChannelIds = new Map();
 const voteMuteMessages = new Map();
 const russianRouletteCooldowns = new Map();
 const reactionRoles = new Map(); // messageId -> Map(emojiKey -> roleId)
-const serverWatches = new Map(); // instanceId -> { instanceId, name, channelId, roleId, lastOnline, lastCount, initialized }
+const serverWatches = new Map(); // instanceId -> { instanceId, name, channelId, lastOnline, lastCount, initialized }
 const musicVolumes = new Map(); // guildId -> volume (0-150)
 const internshipSubs = new Set(); // user IDs subscribed to new-listing DMs
 const internshipSeen = new Set(); // entry keys we've already announced
@@ -572,7 +572,6 @@ function loadServerWatches() {
                 instanceId: w.instanceId,
                 name: w.name ?? null,
                 channelId: w.channelId,
-                roleId: w.roleId ?? null,
                 lastOnline: null,
                 lastCount: 0,
                 initialized: false,
@@ -626,7 +625,6 @@ function saveServerWatches() {
         instanceId: w.instanceId,
         name: w.name,
         channelId: w.channelId,
-        roleId: w.roleId,
     }));
     try {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -898,9 +896,27 @@ async function pollInternships() {
 
 // Reads an AMP instance's running state + live player count via Core/GetStatus.
 // Works for any game AMP manages (Minecraft, Valheim, Rust, etc).
+// An AMP instance that's stopped at the panel/ADS level rejects with
+// "Instance Unavailable" (on login, or in the status body). That means the
+// game server is down — report it as offline rather than treating it as an error.
+function isInstanceUnavailable(text) {
+    return /instance (is )?unavailable/i.test(String(text ?? ''));
+}
+
 async function checkServerStatus(instanceId) {
-    const status = await ampCall('Core/GetStatus', {}, instanceId);
-    const stateCode = Number(status?.State);
+    let status;
+    try {
+        status = await ampCall('Core/GetStatus', {}, instanceId);
+    } catch (e) {
+        if (isInstanceUnavailable(e?.message)) {
+            return { online: false, stateName: 'Unavailable', count: 0, maxCount: 0 };
+        }
+        throw e;
+    }
+    if (isInstanceUnavailable(status?.Title) || status?.State == null) {
+        return { online: false, stateName: 'Unavailable', count: 0, maxCount: 0 };
+    }
+    const stateCode = Number(status.State);
     const metric = status?.Metrics?.['Active Users'];
     const toCount = (v) => {
         const n = Number(v);
@@ -949,7 +965,7 @@ async function pollServerWatches() {
             continue;
         }
 
-        // Online <-> offline transition: announce and ping the role.
+        // Online <-> offline transition.
         if (result.online !== watch.lastOnline) {
             watch.lastOnline = result.online;
             watch.lastCount = result.online ? result.count : 0;
@@ -957,12 +973,11 @@ async function pollServerWatches() {
                 console.error(`[watch] announcement channel ${watch.channelId} not found for ${name}.`);
                 continue;
             }
-            const ping = watch.roleId ? ` <@&${watch.roleId}>` : '';
             const content = result.online
-                ? `🟢 **${name}** is now **online**${result.maxCount ? ` (${result.count}/${result.maxCount} players)` : ''}.${ping}`
-                : `🔴 **${name}** is now **offline** (${result.stateName}).${ping}`;
+                ? `**${name}** is now **online**${result.maxCount ? ` (${result.count}/${result.maxCount} players)` : ''}.`
+                : `**${name}** is now **offline** (${result.stateName}).`;
             await channel
-                .send({ content, allowedMentions: watch.roleId ? { roles: [watch.roleId] } : { parse: [] } })
+                .send({ content, allowedMentions: { parse: [] } })
                 .catch((e) => console.error(`[watch] announce failed for ${name}:`, e?.message ?? e));
             continue;
         }
@@ -1246,9 +1261,6 @@ const commands = [
                 .addChannelOption((o) =>
                     o.setName('channel').setDescription('Channel for announcements').setRequired(true)
                 )
-                .addRoleOption((o) =>
-                    o.setName('role').setDescription('Role to ping on status change').setRequired(true)
-                )
         )
         .addSubcommand((sc) =>
             sc
@@ -1265,13 +1277,22 @@ const commands = [
         .setName('gameserver')
         .setDescription('Control an AMP-managed game server.')
         .addSubcommand((sc) =>
-            sc.setName('start').setDescription('Start the server.').addStringOption(serverOption)
+            sc
+                .setName('start')
+                .setDescription('Start the server.')
+                .addStringOption((o) => serverOption(o).setDescription('Which AMP server to start.').setRequired(true))
         )
         .addSubcommand((sc) =>
-            sc.setName('stop').setDescription('Stop the server.').addStringOption(serverOption)
+            sc
+                .setName('stop')
+                .setDescription('Stop the server.')
+                .addStringOption((o) => serverOption(o).setDescription('Which AMP server to stop.').setRequired(true))
         )
         .addSubcommand((sc) =>
-            sc.setName('restart').setDescription('Restart the server.').addStringOption(serverOption)
+            sc
+                .setName('restart')
+                .setDescription('Restart the server.')
+                .addStringOption((o) => serverOption(o).setDescription('Which AMP server to restart.').setRequired(true))
         )
         .addSubcommand((sc) =>
             sc.setName('status').setDescription('Check AMP-reported status.').addStringOption(serverOption)
@@ -2141,7 +2162,6 @@ client.on('interactionCreate', async (interaction) => {
         if (sub === 'add') {
             const selector = interaction.options.getString('server');
             const channel = interaction.options.getChannel('channel');
-            const role = interaction.options.getRole('role');
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             let instanceId;
@@ -2155,14 +2175,13 @@ client.on('interactionCreate', async (interaction) => {
                 instanceId,
                 name,
                 channelId: channel.id,
-                roleId: role.id,
                 lastOnline: null,
                 lastCount: 0,
                 initialized: false,
             });
             saveServerWatches();
             return interaction.editReply({
-                content: `Watching **${name}**. Announcements in ${channel}, pinging ${role} on status changes.`,
+                content: `Watching **${name}**. Announcements in ${channel}.`,
                 allowedMentions: { parse: [] },
             });
         }
@@ -2192,7 +2211,7 @@ client.on('interactionCreate', async (interaction) => {
                 });
             const lines = [...serverWatches.values()].map((w) => {
                 const s = w.initialized ? (w.lastOnline ? 'online' : 'offline') : 'unknown';
-                return `• **${w.name || w.instanceId}** → <#${w.channelId}>, pings <@&${w.roleId}> — ${s}`;
+                return `• **${w.name || w.instanceId}** → <#${w.channelId}> — ${s}`;
             });
             return interaction.reply({
                 content: lines.join('\n'),

@@ -21,13 +21,13 @@ Both commands talk to [AMP](https://cubecoders.com/AMP), so they work for **any 
 
 | Command | Description |
 |---|---|
-| `/serverwatch add <server> <channel> <role>` | Watch an AMP server and announce online/offline + player-count changes. Pings `<role>` on online/offline transitions. Requires Manage Server. |
+| `/serverwatch add <server> <channel>` | Watch an AMP server and announce online/offline + player-count changes in `<channel>`. Requires Manage Server. |
 | `/serverwatch remove <server>` | Stop watching a server. Requires Manage Server. |
 | `/serverwatch list` | List watched servers and their last-known state. |
-| `/gameserver start\|stop\|restart [server]` | Control an AMP-managed server. `server` autocompletes from your ADS instances; omit it to use the `AMP_INSTANCE` default. Requires a role named **minecraft** by default (configurable via `GAMESERVER_ROLE`). |
-| `/gameserver status [server]` | Read-only AMP status (state + player count) for the chosen (or default) server. Open to anyone. |
+| `/gameserver start\|stop\|restart <server>` | Control an AMP-managed server. `server` is **required** and autocompletes from your ADS instances. Requires a role named **minecraft** by default (configurable via `GAMESERVER_ROLE`). |
+| `/gameserver status [server]` | Read-only AMP status (state + player count). `server` is optional here; omit it to use the `AMP_INSTANCE` default. Open to anyone. |
 
-> **Watching** reports the server's running state and a live **player count** (e.g. *"2 players joined — now 5 online"*) — it does not list individual player names. Player names aren't exposed uniformly across games by AMP; ask if you want name-level tracking for Minecraft specifically.
+> **Watching** reports the server's running state and a live **player count** (e.g. *"2 players joined — now 5 online"*) — it does not list individual player names. Player names aren't exposed uniformly across games by AMP; ask if you want name-level tracking for Minecraft specifically. A server that's stopped at the AMP panel level shows as **offline (Unavailable)**.
 
 #### AMP environment variables
 

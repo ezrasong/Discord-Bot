@@ -1158,12 +1158,11 @@ async function ampCall(endpoint, body = {}, selector) {
 // --- Slash command definitions ---
 
 // Shared `server` option: picks which AMP instance to act on, autocompleted
-// from the ADS instance list. For /gameserver, omitting it falls back to the
-// AMP_INSTANCE env var; /serverwatch makes it required.
+// from the ADS instance list. Required everywhere it's used.
 const serverOption = (o) =>
     o
         .setName('server')
-        .setDescription('Which AMP server (defaults to AMP_INSTANCE).')
+        .setDescription('Which AMP server.')
         .setAutocomplete(true);
 
 const commands = [
@@ -1295,7 +1294,10 @@ const commands = [
                 .addStringOption((o) => serverOption(o).setDescription('Which AMP server to restart.').setRequired(true))
         )
         .addSubcommand((sc) =>
-            sc.setName('status').setDescription('Check AMP-reported status.').addStringOption(serverOption)
+            sc
+                .setName('status')
+                .setDescription('Check AMP-reported status.')
+                .addStringOption((o) => serverOption(o).setDescription('Which AMP server to check.').setRequired(true))
         ),
     new SlashCommandBuilder()
         .setName('internships')

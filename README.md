@@ -25,7 +25,7 @@ Both commands talk to [AMP](https://cubecoders.com/AMP), so they work for **any 
 | `/serverwatch remove <server>` | Stop watching a server. Requires Manage Server. |
 | `/serverwatch list` | List watched servers and their last-known state. |
 | `/gameserver start\|stop\|restart <server>` | Control an AMP-managed server. `server` is **required** and autocompletes from your ADS instances. Requires a role named **minecraft** by default (configurable via `GAMESERVER_ROLE`). |
-| `/gameserver status [server]` | Read-only AMP status (state + player count). `server` is optional here; omit it to use the `AMP_INSTANCE` default. Open to anyone. |
+| `/gameserver status <server>` | Read-only AMP status (state + player count) for the chosen server. `server` is **required**. Open to anyone. |
 
 > **Watching** reports the server's running state and a live **player count** (e.g. *"2 players joined — now 5 online"*) — it does not list individual player names. Player names aren't exposed uniformly across games by AMP; ask if you want name-level tracking for Minecraft specifically. A server that's stopped at the AMP panel level shows as **offline (Unavailable)**.
 
@@ -35,7 +35,7 @@ Both commands talk to [AMP](https://cubecoders.com/AMP), so they work for **any 
 |---|---|---|
 | `AMP_URL` | _(unset)_ | Base URL of your AMP / ADS controller (e.g. `https://amp.example.com`). |
 | `AMP_USERNAME` / `AMP_PASSWORD` | _(unset)_ | AMP login credentials. |
-| `AMP_INSTANCE` | _(unset)_ | Default instance name or GUID when omitting the `server` option on `/gameserver`. |
+| `AMP_INSTANCE` | _(unset)_ | Optional fallback instance for single-server (non-ADS) AMP setups. The `/gameserver` and `/serverwatch` commands always take an explicit `server`, so this isn't needed when using ADS. |
 | `GAMESERVER_ROLE` | `minecraft` | Role name (case-insensitive) required to run `/gameserver start\|stop\|restart`. |
 
 ### Internships

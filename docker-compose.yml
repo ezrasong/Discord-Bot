@@ -13,7 +13,7 @@ services:
       # - AMP_URL=http://tower.local:8080
       # - AMP_USERNAME=discord-bot
       # - AMP_PASSWORD=changeme
-      # - AMP_INSTANCE=             # default instance for /gameserver when none is specified (ADS only)
+      # - AMP_INSTANCE=             # fallback instance for single-server (non-ADS) AMP; not needed with ADS
       # - GAMESERVER_ROLE=minecraft # role name required for /gameserver start|stop|restart
     depends_on:
       - lavalink

@@ -974,7 +974,7 @@ async function pollServerWatches() {
                 continue;
             }
             const content = result.online
-                ? `**${name}** is now **online**${result.maxCount ? ` (${result.count}/${result.maxCount} players)` : ''}.`
+                ? `**${name}** is now **online**${result.maxCount ? ` — ${result.count}/${result.maxCount} players` : ''}.`
                 : `**${name}** is now **offline** (${result.stateName}).`;
             await channel
                 .send({ content, allowedMentions: { parse: [] } })
@@ -2170,7 +2170,7 @@ client.on('interactionCreate', async (interaction) => {
             try {
                 instanceId = (await ampResolveInstance(selector)) ?? selector;
             } catch (e) {
-                return interaction.editReply(`Couldn't resolve that server: ${e.message}`);
+                return interaction.editReply(`Couldn't find that server — ${e.message}`);
             }
             const name = ampInstanceName(instanceId);
             serverWatches.set(instanceId, {
@@ -2183,7 +2183,7 @@ client.on('interactionCreate', async (interaction) => {
             });
             saveServerWatches();
             return interaction.editReply({
-                content: `Watching **${name}**. Announcements in ${channel}.`,
+                content: `Now watching **${name}** — status updates will post in ${channel}.`,
                 allowedMentions: { parse: [] },
             });
         }
@@ -2198,25 +2198,25 @@ client.on('interactionCreate', async (interaction) => {
                 instanceId = selector;
             }
             if (!serverWatches.has(instanceId))
-                return interaction.editReply('No matching watch found.');
+                return interaction.editReply("That server isn't being watched.");
             const name = serverWatches.get(instanceId).name || instanceId;
             serverWatches.delete(instanceId);
             saveServerWatches();
-            return interaction.editReply(`Stopped watching **${name}**.`);
+            return interaction.editReply(`No longer watching **${name}**.`);
         }
 
         if (sub === 'list') {
             if (serverWatches.size === 0)
                 return interaction.reply({
-                    content: 'No servers are being watched.',
+                    content: "Not watching any servers yet. Add one with `/serverwatch add`.",
                     flags: MessageFlags.Ephemeral,
                 });
             const lines = [...serverWatches.values()].map((w) => {
-                const s = w.initialized ? (w.lastOnline ? 'online' : 'offline') : 'unknown';
-                return `• **${w.name || w.instanceId}** → <#${w.channelId}> — ${s}`;
+                const s = w.initialized ? (w.lastOnline ? 'online' : 'offline') : 'not checked yet';
+                return `• **${w.name || w.instanceId}** — ${s}, posting to <#${w.channelId}>`;
             });
             return interaction.reply({
-                content: lines.join('\n'),
+                content: `**Watched servers**\n${lines.join('\n')}`,
                 flags: MessageFlags.Ephemeral,
                 allowedMentions: { parse: [] },
             });
@@ -2249,52 +2249,45 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const instanceId = await ampResolveInstance(selector);
             const name = instanceId ? ampInstanceName(instanceId) : 'the server';
-            const label = instanceId ? ` for **${name}**` : '';
 
             if (sub === 'status') {
                 const s = await checkServerStatus(selector);
-                const playerStr = s.maxCount ? ` — players: ${s.count}/${s.maxCount}` : '';
-                return interaction.editReply(`AMP status${label}: **${s.stateName}**${playerStr}`);
+                if (s.online) {
+                    const playerStr = s.maxCount ? ` — ${s.count}/${s.maxCount} players` : '';
+                    return interaction.editReply(`**${name}** is **online**${playerStr}.`);
+                }
+                return interaction.editReply(`**${name}** is **offline** (${s.stateName}).`);
             }
 
             // start/stop/restart act on the game inside the instance via Core/*.
+            const verbing = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' }[sub];
             const coreEndpoint = { start: 'Core/Start', stop: 'Core/Stop', restart: 'Core/Restart' }[sub];
             try {
                 const result = await ampCall(coreEndpoint, {}, selector);
                 if (result && result.Status === false) {
-                    return interaction.editReply(
-                        `AMP couldn't ${sub}${label}: ${result.Reason || 'unknown reason'}`
-                    );
+                    return interaction.editReply(`Couldn't ${sub} **${name}** — ${result.Reason || 'no reason given'}`);
                 }
-                return interaction.editReply(
-                    `Sent \`${sub}\`${label} to AMP. It may take a moment to take effect.`
-                );
+                return interaction.editReply(`${verbing} **${name}**… give it a moment.`);
             } catch (e) {
                 // If the instance itself is stopped at the panel level, Core/* is unreachable.
                 // Escalate to the ADS controller, which manages the instance lifecycle.
                 if (!isInstanceUnavailable(e?.message)) throw e;
                 if (sub === 'stop') {
-                    return interaction.editReply(`**${name}** is already offline (its AMP instance isn't running).`);
+                    return interaction.editReply(`**${name}** is already offline.`);
                 }
                 if (!instanceId) {
-                    return interaction.editReply(
-                        `**${name}**'s AMP instance isn't running, and no ADS instance is configured to bring it up.`
-                    );
+                    return interaction.editReply(`That server is fully stopped and can't be started remotely.`);
                 }
                 // start / restart: bring the whole instance online via the controller.
                 const adsResult = await ampCallRaw('ADSModule/StartInstance', { InstanceName: instanceId });
                 if (adsResult && adsResult.Status === false) {
-                    return interaction.editReply(
-                        `AMP couldn't start **${name}**'s instance: ${adsResult.Reason || 'unknown reason'}`
-                    );
+                    return interaction.editReply(`Couldn't start **${name}** — ${adsResult.Reason || 'no reason given'}`);
                 }
-                return interaction.editReply(
-                    `**${name}**'s instance was offline — sent **start** to bring it online. Give it a minute to boot.`
-                );
+                return interaction.editReply(`**${name}** was fully stopped — bringing it back online now. Give it a minute.`);
             }
         } catch (e) {
             console.error(`AMP ${sub} failed:`, e);
-            return interaction.editReply(`AMP request failed: ${e.message}`);
+            return interaction.editReply(`Something went wrong reaching the server. Try again in a moment.`);
         }
     }
 

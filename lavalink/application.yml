@@ -6,9 +6,15 @@ server:
 
 lavalink:
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
-      repository: "https://maven.lavalink.dev/releases"
-      snapshot: false
+    # youtube-source (https://github.com/lavalink-devs/youtube-source).
+    # The newest *release* (1.18.2, Jul 2026) predates YouTube's 2026-08-18 change that broke the TV
+    # client ("The page needs to be reloaded"), so this pins the tip of `main` as a snapshot instead
+    # (TV User-Agent fix, IOS made playable, ANDROID client bump). Snapshot versions are full 40-char
+    # commit hashes from `main`, listed at https://maven.lavalink.dev/#/snapshots/dev/lavalink/youtube/youtube-plugin
+    # and REQUIRE `snapshot: true` (otherwise Lavalink looks in the releases repo and 404s).
+    # When a release newer than 1.18.2 ships, switch back to e.g. "...:1.19.0" and `snapshot: false`.
+    - dependency: "dev.lavalink.youtube:youtube-plugin:f45bbb7aebfcbc1c553769e04af6cd43afa8b7c3"
+      snapshot: true
   pluginsDir: "./plugins"
   server:
     password: "${LAVALINK_SERVER_PASSWORD:youshallnotpass}"
@@ -49,15 +55,36 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
+    # Queried in order. Playback falls through to the next client when one fails; when they ALL fail
+    # Lavalink logs "AllClientsFailedException" with one line per client saying why.
+    # TVHTML5EMBEDDED was removed from the plugin in 1.18.0 - don't add it back.
     clients:
-      - MUSIC
-      - TV
-      - ANDROID_VR
-      - WEB
-      - WEBEMBEDDED
+      - MUSIC           # ytmsearch: search only (the bot's default search source)
+      - TV              # playback only; needs the OAuth sign-in below. Most reliable once signed in.
+      - TVHTML5_SIMPLY  # no sign-in needed
+      - ANDROID_VR      # no sign-in needed; YouTube answers "This video requires login" from some IPs
+      - IOS             # no sign-in needed; no Opus formats (Lavalink transcodes), so kept late in the list
+      - WEB             # only plays with a poToken (see `pot` in the youtube-source README); still useful for ytsearch:/URL metadata
+      - WEBEMBEDDED     # same as WEB
+    # YouTube blocks most anonymous playback now. Signing in with a THROWAWAY Google account (never your
+    # main one) is what makes the TV client work. One-time setup:
+    #   1. Leave YOUTUBE_REFRESH_TOKEN unset and start Lavalink.
+    #   2. `docker logs discord-mute-bot-lavalink` prints
+    #      "OAUTH INTEGRATION: To give youtube-source access to your account, go to https://www.google.com/device and enter code ..."
+    #      Open that URL, sign in with the burner account, enter the code.
+    #   3. The log then prints "OAUTH INTEGRATION: Token retrieved successfully ... (1//0g...)".
+    #      Put the token in parentheses into YOUTUBE_REFRESH_TOKEN on the lavalink container and restart it.
+    # Until step 3 is done the prompt reappears on every restart and TV playback fails with a login error.
     oauth:
       enabled: true
-      refreshToken: ""
+      refreshToken: "${YOUTUBE_REFRESH_TOKEN:}"
+    # Signature deciphering is no longer maintained inside the plugin (the maintainers say local extraction
+    # "is expected to fail"), so TV/WEB-family playback needs a cipher server. Default is yt-cipher's public
+    # instance (rate-limited to 10 req/s, plenty for one bot). To self-host: https://github.com/kikkia/yt-cipher,
+    # point YOUTUBE_CIPHER_URL at it and, if you set API_TOKEN on it, add `password: "..."` here.
+    remoteCipher:
+      url: "${YOUTUBE_CIPHER_URL:https://cipher.kikkia.dev/}"
+      userAgent: "discord-mute-bot"
 
 logging:
   file:

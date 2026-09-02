@@ -176,7 +176,7 @@ Both methods auto-restart on reboot. The template uses `--restart=unless-stopped
 
 ## Music (Lavalink) setup
 
-Music commands are powered by [Lavalink v4](https://github.com/lavalink-devs/Lavalink), which runs as a separate container next to the bot. The bot only sends commands over WebSocket — all the audio decoding, Opus encoding, and voice gateway work happens inside the JVM, so it stays out of Node's event loop and YouTube anti-bot breakage is patched upstream by the [youtube-source plugin](https://github.com/lavalink-devs/youtube-source) maintainers (just bump the version in `lavalink/application.yml` when needed).
+Music commands are powered by [Lavalink v4](https://github.com/lavalink-devs/Lavalink), which runs as a separate container next to the bot. The bot only sends commands over WebSocket — all the audio decoding, Opus encoding, and voice gateway work happens inside the JVM, so it stays out of Node's event loop and YouTube anti-bot breakage is patched upstream by the [youtube-source plugin](https://github.com/lavalink-devs/youtube-source) maintainers. YouTube does still break periodically, and there is a one-time sign-in step you have to do yourself; see [YouTube playback](#youtube-playback) below.
 
 If you used the included `docker-compose.yml`, Lavalink is already wired up. Just make sure these env vars are set on the bot container:
 
@@ -185,6 +185,21 @@ If you used the included `docker-compose.yml`, Lavalink is already wired up. Jus
 | `LAVALINK_HOST` | `lavalink` | Hostname of the Lavalink server (Compose service name when colocated). |
 | `LAVALINK_PORT` | `2333` | Port Lavalink listens on. |
 | `LAVALINK_PASSWORD` | _(unset)_ | Must match the `password` in `lavalink/application.yml`. **Music commands are only registered when this is set.** |
+
+### YouTube playback
+
+YouTube blocks most anonymous playback, so the bundled `lavalink/application.yml` does three things. If music stops working, check these first.
+
+1. **Plugin version.** The config pins a `main`-branch snapshot of youtube-source (a full 40-character commit hash with `snapshot: true`) because the newest release predates YouTube's August 2026 changes. To update, pick the newest hash from the [snapshot list](https://maven.lavalink.dev/#/snapshots/dev/lavalink/youtube/youtube-plugin) (or a new release once one ships, with `snapshot: false`) and restart the Lavalink container. A `FileNotFoundException` for the plugin jar on startup means that version/`snapshot` combination doesn't exist.
+2. **One-time Google sign-in (OAuth).** The `TV` client is the most reliable one and only works signed in. Use a throwaway Google account, never your main one:
+   1. Start Lavalink without `YOUTUBE_REFRESH_TOKEN` set and run `docker logs -f discord-mute-bot-lavalink`.
+   2. Look for `OAUTH INTEGRATION: To give youtube-source access to your account, go to https://www.google.com/device and enter code ...`. Open the link, sign in with the burner account, enter the code.
+   3. The log then prints `OAUTH INTEGRATION: Token retrieved successfully ... (1//0g...)`. Put that value in `YOUTUBE_REFRESH_TOKEN` on the Lavalink container and restart it. The prompt won't appear again.
+3. **Signature cipher server.** The plugin no longer deciphers stream signatures itself; it asks a [yt-cipher](https://github.com/kikkia/yt-cipher) server. The config defaults to the public instance at `https://cipher.kikkia.dev/`. Self-host it and set `YOUTUBE_CIPHER_URL` if you prefer.
+
+The `WEB`/`WEBEMBEDDED` clients additionally need a poToken to play anything (see the plugin README); they stay in the list as a last resort and for metadata lookups.
+
+When every client fails, Lavalink logs `AllClientsFailedException` with one line per client, e.g. `TVHTML5 failed: The page needs to be reloaded` (plugin too old), `This video requires login` (no OAuth token, or YouTube flagged the IP), `WEB failed: No supported audio streams available` (no poToken).
 
 ### Optional: Spotify links
 

@@ -33,6 +33,11 @@ services:
       - SERVER_PORT=2333
       - SERVER_ADDRESS=0.0.0.0
       - LAVALINK_SERVER_PASSWORD=youshallnotpass
+      # YouTube playback needs a one-time sign-in with a throwaway Google account. See README
+      # "YouTube playback" for the 3-step flow, then paste the token here and restart lavalink.
+      # - YOUTUBE_REFRESH_TOKEN=1//0g...
+      # Signature-cipher server. Defaults to yt-cipher's public instance; set if you self-host it.
+      # - YOUTUBE_CIPHER_URL=http://yt-cipher:8001
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml:ro
       - ./lavalink/plugins:/opt/Lavalink/plugins
